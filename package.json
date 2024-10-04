@@ -10,6 +10,7 @@
     "test": "jest"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.13",
     "@types/node": "^22.7.2",
     "@types/web": "^0.0.165",
     "browserslist-to-esbuild": "^2.1.1",
