@@ -5,7 +5,7 @@
 > (highly appreciated).
 
 <p align="center">
-    <img src="/logos/logo.jpg" alt="HullsJS logo" width="40%"></img>
+    <img src="/logos/logo.jpg" alt="HullsJS logo" style="width: 45%"></img>
     <br>
     JS storage that is: Reliable. Simple. Fast. Small. Async.
     <br>
