@@ -16,6 +16,7 @@ import * as USE from './defines'
 import './polyfills'
 import { HullsError } from './errors'
 import { is_string, objarr2obj, JArray } from './utils'
+import { table } from 'console'
 
 function wrap_req(func: Function, ...args: any[]): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
@@ -55,9 +56,7 @@ type HullsTableOptions = {
     autoinc?: boolean
 }
 
-type HullsCreateTableOptions = HullsTableOptions & {
-    name: string,
-}
+type HullsCreateTableOptions = Record<'name', string> & HullsTableOptions
 
 
 export class HullsDB implements HullsDBInterface, Disposable {
@@ -110,9 +109,13 @@ export class HullsDB implements HullsDBInterface, Disposable {
         // below: means we're dealing with a DB passed as db_name & options
     }
 
-    protected _ensure_connection() {
-        if (undefined === this.connection)
-            throw new HullsError('Connection is not open')
+    /**
+     * Utility method used internally to verify that connection is not open
+     * before performing some manipulations on DB
+     */
+    protected _ensure_not_connected() {
+        if (this.connection !== undefined)
+            throw new HullsError('Connection already open')
     }
 
     /**
@@ -256,7 +259,7 @@ export class HullsDB implements HullsDBInterface, Disposable {
     }
 
     // TODO: add ability to set key: AUTOINC
-    protected _prepare_tableopts(tableopts: HullsTableOptions, tablename?: string) {
+    protected _prepare_tableopts<T extends HullsTableOptions> (tableopts: T, tablename?: string) {
         if (!tableopts.key || is_string(tableopts.key)) {
             // Table is a string or an object storage with no keys -> do nothing
             return
@@ -286,13 +289,28 @@ OPTOUT: if ((tableopts.autoinc !== undefined) && !tableopts.autoinc) {
     }
 
     // Table creation logic
-    create_table(tableopts: HullsCreateTableOptions) {
-        tableopts = Object.assign({}, tableopts)    // create copy
-        this._prepare_tableopts(tableopts, tableopts.name)  // modify in-place
-OPTOUT: Object.seal(tableopts)  // prevent further modifications  
-        const entry = {
-            add: tableopts
+    create_table(name: string, tableopts?: HullsTableOptions) : void
+    create_table({name, ...tableopts}: HullsCreateTableOptions) : void
+    create_table(name_or_obj: string | HullsCreateTableOptions,
+                 opts?: HullsTableOptions) : void {
+
+        // This check will be optimized-out on production builds
+OPTOUT: this._ensure_not_connected()
+
+        let rec
+        if (is_string(name_or_obj)) {
+            // args passed separately -> make it object
+            rec = {name: name_or_obj, ...opts}
+        } else {
+            // args already passed as object -> create copy
+            rec = Object.assign({}, name_or_obj)
         }
+
+        this._prepare_tableopts(rec, rec.name)  // modify in-place
+
+        const entry = { add: rec }
+OPTOUT: Object.seal(entry)      // prevent further modifications
+
         this.oplist.push(entry)
     }
 
@@ -300,12 +318,21 @@ OPTOUT: Object.seal(tableopts)  // prevent further modifications
     }
 
     // Table removal logic
-    async drop_table(...args) {
+    drop_table(name: string) {
+        // Make sure connection is not open before continuing
+        // This check will be optimized-out for production builds
+OPTOUT: this._ensure_not_connected()
 
+        const entry = {del: name}
+OPTOUT: Object.seal(entry)      // prevent further modifications
+
+        this.oplist.push(entry)
     }
 
-    async drop_tables(...args) {
-
+    drop_tables(names: Iterable<string>) {
+        for (const name of names) {
+            this.drop_table(name)
+        }
     }
 }
 

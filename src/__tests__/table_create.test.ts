@@ -6,7 +6,7 @@ import h from '..'
 
 
 describe('Create tables', () => {
-    let db
+    let db: h.HullsDB
 
     function last_entry() {
         const arr = db.oplist
