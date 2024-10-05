@@ -18,12 +18,15 @@ const config = {
 
   // Indicates whether the coverage information should be collected while executing the test
   // collectCoverage: false,
+  // Can be switched on with jest --collect-coverage
 
   // An array of glob patterns indicating a set of files for which coverage information should be collected
   // collectCoverageFrom: undefined,
 
   // The directory where Jest should output its coverage files
   // coverageDirectory: undefined,
+  // Use separate directory, not default 'coverage'
+  coverageDirectory: '.coverage',
 
   // An array of regexp pattern strings used to skip coverage collection
   // coveragePathIgnorePatterns: [
@@ -40,6 +43,10 @@ const config = {
   //   "lcov",
   //   "clover"
   // ],
+  // Use only lcov html (native istanbul) for faster results
+  // see https://istanbul.js.org/docs/advanced/alternative-reporters/
+  // for full list of reporters
+  coverageReporters: ['text', 'text-summary', 'html'],
 
   // An object that configures minimum threshold enforcement for coverage results
   // coverageThreshold: undefined,
@@ -176,7 +183,9 @@ const config = {
   // transform: undefined,
   // Use esbuild-jest for TS transformations
   transform:  {
-    '^.+\\.tsx?$': 'esbuild-jest2'
+    '^.+\\.tsx?$': ['esbuild-jest2', { 
+      sourcemap: true,
+    }]
   },
 
   // An array of regexp pattern strings that are matched against all source file paths, matched files will skip transformation
