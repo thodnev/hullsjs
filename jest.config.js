@@ -46,7 +46,7 @@ const config = {
   // Use only lcov html (native istanbul) for faster results
   // see https://istanbul.js.org/docs/advanced/alternative-reporters/
   // for full list of reporters
-  coverageReporters: ['text', 'text-summary', 'html'],
+  coverageReporters: ['text', 'text-summary', 'html', 'lcovonly'],
 
   // An object that configures minimum threshold enforcement for coverage results
   // coverageThreshold: undefined,

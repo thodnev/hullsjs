@@ -16,7 +16,6 @@ import * as USE from './defines'
 import './polyfills'
 import { HullsError } from './errors'
 import { is_string, objarr2obj, JArray } from './utils'
-import { table } from 'console'
 
 function wrap_req(func: Function, ...args: any[]): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
@@ -34,8 +33,7 @@ function wrap_req(func: Function, ...args: any[]): Promise<IDBDatabase> {
 }
 
 /** Autoincrement symbol used in table description notations */
-export const AUTOINC = Symbol.for('hulls.AUTOINC')
-
+export const AUTOINC: symbol = Symbol.for('hulls.AUTOINC')
 
 interface HullsDBInterface {
 
@@ -51,13 +49,19 @@ interface HullsOpenOptions {
     readonly db_version?: number
 }
 
+type HullsTableKey = string | typeof AUTOINC | (Array<string | typeof AUTOINC>) 
+
 type HullsTableOptions = {
-    key?: string | (Array<string | typeof AUTOINC>) | typeof AUTOINC,
+    key?: HullsTableKey,
     autoinc?: boolean
 }
 
 type HullsCreateTableOptions = Record<'name', string> & HullsTableOptions
+// type HullsCreateTableOptions = HullsTableOptions & {
+//     name: string
+// }
 
+// type HullsCreateTableItem = Record<string, Required<HullsTableOptions>['key']>
 
 export class HullsDB implements HullsDBInterface, Disposable {
     connection: IDBDatabase | undefined      /** holds connection object */
@@ -113,9 +117,11 @@ export class HullsDB implements HullsDBInterface, Disposable {
      * Utility method used internally to verify that connection is not open
      * before performing some manipulations on DB
      */
-    protected _ensure_not_connected() {
-        if (this.connection !== undefined)
-            throw new HullsError('Connection already open')
+    protected _ensure_connection_is(state: boolean) {
+        if ((this.connection !== undefined) !== state) {
+            const st = state ? 'not' : 'already'
+            throw new HullsError(`Connection is ${st} open`)
+        }
     }
 
     /**
@@ -295,7 +301,7 @@ OPTOUT: if ((tableopts.autoinc !== undefined) && !tableopts.autoinc) {
                  opts?: HullsTableOptions) : void {
 
         // This check will be optimized-out on production builds
-OPTOUT: this._ensure_not_connected()
+OPTOUT: this._ensure_connection_is(false)
 
         let rec
         if (is_string(name_or_obj)) {
@@ -314,14 +320,18 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
         this.oplist.push(entry)
     }
 
-    async create_tables(...args) {
+    create_tables(tables: Record<string, HullsTableKey>) {
+        for (const [name, key] of Object.entries(tables)) {
+            const rec: HullsCreateTableOptions = {'name': name, 'key': key}
+            this.create_table(rec)
+        }
     }
 
     // Table removal logic
     drop_table(name: string) {
         // Make sure connection is not open before continuing
         // This check will be optimized-out for production builds
-OPTOUT: this._ensure_not_connected()
+OPTOUT: this._ensure_connection_is(false)
 
         const entry = {del: name}
 OPTOUT: Object.seal(entry)      // prevent further modifications

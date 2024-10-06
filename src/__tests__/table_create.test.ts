@@ -62,6 +62,12 @@ describe('Create tables', () => {
         entry_equals(add(entry))
     })
 
+    test('create table with AUTOINC key', () => {
+        const entry = {name: 'AUTOINC', key: h.AUTOINC}
+        db.create_table(entry)
+        entry_equals(add({name: entry.name, autoinc: true}))
+    })
+
     test.each([undefined, true, false])
              ('create table with empty array key and autoinc %s', (ainc) => {
         const entry = with_autoinc({name: `[]key+${ainc}`}, ainc)
