@@ -1,6 +1,4 @@
-// TODO: rewrite it as a Jest test
-//       with Puppeteer to test in a proper browser environment
-// argos-ci/jest-puppeteer, etroynov/esbuild-jest || kulshekhar/ts-jest, 
+// TODO: add Puppeteer to test in a proper browser environment (argos-ci/jest-puppeteer)
 
 import h from '..'
 
