@@ -1,5 +1,6 @@
 // TODO: add Puppeteer to test in a proper browser environment (argos-ci/jest-puppeteer)
 
+import { describe, expect, beforeAll, test } from 'vitest'
 import h from '..'
 
 
