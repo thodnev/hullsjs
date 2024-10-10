@@ -16,17 +16,14 @@ import * as USE from './defines'
 import './polyfills'
 import { HullsError } from './errors'
 import { is_string, objarr2obj, JArray } from './utils'
-import { table } from 'console'
 
-function wrap_req(func: Function, ...args: any[]): Promise<IDBDatabase> {
+function wrap_request(request: IDBOpenDBRequest | IDBRequest<any>): Promise<any> {
     return new Promise((resolve, reject) => {
         try {
-            //LOG('GOT FOR PROMISE', func, args)
-            const req = func(...args)
-            // attach callbacks ASAP, here we have:
-            // onsuccess, onerror, onblocked, onupgradeneeded
-            req.onsuccess = (_: any) => resolve(req.result)
-            req.onerror = (_: any) => reject(HullsError.from_cause(req.error))
+            // other callbacks (i.e. onblocked, onupgradeneeded)
+            // should be attached by the caller in the outer scope
+            request.onsuccess = (_: any) => resolve(request.result)
+            request.onerror = (_: any) => reject(HullsError.from_cause(request.error))
         } catch (err) {
             reject(HullsError.from_cause(err))
         }
@@ -34,8 +31,7 @@ function wrap_req(func: Function, ...args: any[]): Promise<IDBDatabase> {
 }
 
 /** Autoincrement symbol used in table description notations */
-export const AUTOINC = Symbol.for('hulls.AUTOINC')
-
+export const AUTOINC: symbol = Symbol.for('hulls.AUTOINC')
 
 interface HullsDBInterface {
 
@@ -51,15 +47,25 @@ interface HullsOpenOptions {
     readonly db_version?: number
 }
 
+type HullsTableKey = string | typeof AUTOINC | (Array<string | typeof AUTOINC>) 
+
 type HullsTableOptions = {
-    key?: string | (Array<string | typeof AUTOINC>) | typeof AUTOINC,
+    key?: HullsTableKey,
     autoinc?: boolean
 }
 
 type HullsCreateTableOptions = Record<'name', string> & HullsTableOptions
+// type HullsCreateTableOptions = HullsTableOptions & {
+//     name: string
+// }
 
+// type HullsCreateTableItem = Record<string, Required<HullsTableOptions>['key']>
 
 export class HullsDB implements HullsDBInterface, Disposable {
+    // type the constructor, workaround per:
+    // https://github.com/Microsoft/TypeScript/issues/3841#issuecomment-2381594311
+    declare ['constructor']: typeof HullsDB
+
     connection: IDBDatabase | undefined      /** holds connection object */
     #__name: string | undefined
     #__version: number | undefined
@@ -113,9 +119,11 @@ export class HullsDB implements HullsDBInterface, Disposable {
      * Utility method used internally to verify that connection is not open
      * before performing some manipulations on DB
      */
-    protected _ensure_not_connected() {
-        if (this.connection !== undefined)
-            throw new HullsError('Connection already open')
+    protected _ensure_connection_is(state: boolean) {
+        if ((this.connection !== undefined) !== state) {
+            const st = state ? 'not' : 'already'
+            throw new HullsError(`Connection is ${st} open`)
+        }
     }
 
     /**
@@ -124,10 +132,12 @@ export class HullsDB implements HullsDBInterface, Disposable {
      * @remarks
      * This is a pseudo-private method with common logic abstracted.
      * One should use {@link HullsDB.get_databases} method instead.
+     * @todo TODO:
+     * Make type inferred : proper objarr2obj typing required
      * 
      * @returns Object of the form {db_name: db_version}
      */
-    protected static async _get_dbs() {
+    protected static async _get_dbs(): Promise<Record<string, number>> {
         const dbsarr = await indexedDB.databases()
         return objarr2obj(dbsarr, {key: 'name', value: 'version'})
     }
@@ -137,7 +147,7 @@ export class HullsDB implements HullsDBInterface, Disposable {
      * @param db_name - name of the database
      * @returns db_version or null (when given db was not found)
      */
-    protected static async _find_db_ver(db_name: string): Promise<number | null> {
+    protected static async _find_db_ver(db_name: string) {
         const dbs = await this._get_dbs()
         return db_name in dbs ? dbs[db_name] : null
     }
@@ -219,8 +229,8 @@ export class HullsDB implements HullsDBInterface, Disposable {
      * @throws HullsError when the DB engine can't proceed with the removal
      */
     static async remove_database(db_name: string) {
-        const deldb = indexedDB.deleteDatabase.bind(indexedDB)
-        await wrap_req(deldb, db_name)
+        const req = indexedDB.deleteDatabase(db_name)
+        await wrap_request(req)
     }
 
     /**
@@ -295,7 +305,7 @@ OPTOUT: if ((tableopts.autoinc !== undefined) && !tableopts.autoinc) {
                  opts?: HullsTableOptions) : void {
 
         // This check will be optimized-out on production builds
-OPTOUT: this._ensure_not_connected()
+OPTOUT: this._ensure_connection_is(false)
 
         let rec
         if (is_string(name_or_obj)) {
@@ -314,14 +324,18 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
         this.oplist.push(entry)
     }
 
-    async create_tables(...args) {
+    create_tables(tables: Record<string, HullsTableKey>) {
+        for (const [name, key] of Object.entries(tables)) {
+            const rec: HullsCreateTableOptions = {'name': name, 'key': key}
+            this.create_table(rec)
+        }
     }
 
     // Table removal logic
     drop_table(name: string) {
         // Make sure connection is not open before continuing
         // This check will be optimized-out for production builds
-OPTOUT: this._ensure_not_connected()
+OPTOUT: this._ensure_connection_is(false)
 
         const entry = {del: name}
 OPTOUT: Object.seal(entry)      // prevent further modifications
@@ -332,6 +346,34 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
     drop_tables(names: Iterable<string>) {
         for (const name of names) {
             this.drop_table(name)
+        }
+    }
+
+    async open({bump_db_version=true}) {
+        // opening a connection that is already open should result in an error
+        // But this check is to be removed in production runtime
+OPTOUT: this._ensure_connection_is(false)
+
+        // db_name must be set beforehand one way or another
+        // This check is also removed from production runtime builds
+        const db_name = this.db_name
+OPTOUT: if (db_name === undefined) {
+            throw new HullsError('db_name not defined')
+        }
+
+        // Try searching for a DB with a name provided.
+        // - we can't create a DB that does not exist unless CREATE flag is provided
+        // - we can't update existing DB unless MODIFY flag is provided
+        // - we can't open non-existing DB
+        // Simplified version of the above statements:
+        // - Allow opening existing DBs (applying or not applying the table
+        //   modifications - assume the dev knows what he is doing);
+        // - Allow creating new DBs only when table structure is defined beforehand;
+        // - Disallow creating empty DBs with no tables (as completely useless)
+        
+        const found_ver = this.constructor._find_db_ver(db_name)
+        if (found_ver === null) {
+            // ...
         }
     }
 }

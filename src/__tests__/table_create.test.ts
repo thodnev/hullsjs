@@ -1,7 +1,6 @@
-// TODO: rewrite it as a Jest test
-//       with Puppeteer to test in a proper browser environment
-// argos-ci/jest-puppeteer, etroynov/esbuild-jest || kulshekhar/ts-jest, 
+// TODO: add Puppeteer to test in a proper browser environment (argos-ci/jest-puppeteer)
 
+import { describe, expect, beforeAll, test } from 'vitest'
 import h from '..'
 
 
@@ -60,6 +59,12 @@ describe('Create tables', () => {
         const entry = with_autoinc({name: `strkey+${ainc}`, key: 'astring'}, ainc)
         db.create_table(entry)
         entry_equals(add(entry))
+    })
+
+    test('create table with AUTOINC key', () => {
+        const entry = {name: 'AUTOINC', key: h.AUTOINC}
+        db.create_table(entry)
+        entry_equals(add({name: entry.name, autoinc: true}))
     })
 
     test.each([undefined, true, false])

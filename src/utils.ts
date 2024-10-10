@@ -9,8 +9,11 @@ export function is_string(obj: any) {
     return (typeof obj === 'string') || (obj instanceof String)
 }
 
+
 /**
  * Converts array of key-value objects into one object
+ * @todo TODO: add proper typing
+ * 
  * @param arr - input array of objects of the form [{key: 'k1', value: 'v1'}, ...]
  * @param options
  * @param options.key - name of the key property in each input object
