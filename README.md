@@ -24,6 +24,16 @@
   During the early stages of development, we tried polyfilling the [TC39](https://github.com/tc39/proposal-explicit-resource-management) `Symbol.dispose` the usual way, using [core-js](https://github.com/zloirock/core-js/blob/master/packages/core-js/modules/esnext.symbol.dispose.js).
   But having this sole feature with a means of core-js introduced vast amounts of code into the bundle (+8.1 KiB minified, +3 KiB gzipped, +2.7 KiB brotlied).
   Then we've read some news on core-js and its pushing donations agenda, and finally decided to polyfill the feature ourselves (it is really just one line of code, but which one to choose wisely is not as obvious as it seems).
+- **HullsDB is ready-to-use and developer friendly**.
+  Original `indexedDB` API is brain-damaging.
+  MDN docs give explanations that look like being AI-generated and actually explain
+  nothing. For example: there exists indexedDB versioning, but can versions
+  be downgraded?; what the initial version should be, a `0` or not?; how the key specified by `keyPath` is different from `primaryKey`?; ...and many more... Good luck trying to find answers to these questions on one's own.
+
+  A developer needs to smoke lots of fine-rolled documentation
+  sheets before being able to actually produce some working code.  
+
+  HullsDB fixes that.
 - **It is async to the backbone**. Why do one have to remember all this [scheisse](https://translate.google.com/?sl=de&tl=en&text=scheiße&op=translate)? – No, you don't! HullsJS will save your nerves and boost your performance.
 - **It is actively developed**. 
 

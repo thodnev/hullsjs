@@ -56,13 +56,13 @@ describe('Create tables', () => {
 
     test.each([undefined, true, false])
              ('create table with string key and autoinc %s', (ainc) => {
-        const entry = with_autoinc({name: `strkey+${ainc}`, key: 'astring'}, ainc)
+        const entry = with_autoinc({name: `strkey+${ainc}`, pkey: 'astring'}, ainc)
         db.create_table(entry)
         entry_equals(add(entry))
     })
 
     test('create table with AUTOINC key', () => {
-        const entry = {name: 'AUTOINC', key: h.AUTOINC}
+        const entry = {name: 'AUTOINC', pkey: h.AUTOINC}
         db.create_table(entry)
         entry_equals(add({name: entry.name, autoinc: true}))
     })
@@ -81,10 +81,13 @@ describe('Create tables', () => {
         const tname = '[..., AUTOINC]'
         const keys = ['one', 'two']
         // here AUTOINC should get removed from keys
-        const entry = with_autoinc({name: tname, key: [...keys, h.AUTOINC]}, ainc)
+        const entry = with_autoinc({name: tname, pkey: [...keys, h.AUTOINC]}, ainc)
         db.create_table(entry)
-        entry_equals(add({name: tname, key: keys, autoinc: true}))
+        entry_equals(add({name: tname, pkey: keys, autoinc: true}))
     })
+
+    // TODO: test & ensure that .autoinc always gets set when it was provided
+    //       (no matter how exactly)
 })
 // const db = new h.HullsDB('mydb');
 // db.create_table({name: 'nokey'});

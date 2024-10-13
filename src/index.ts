@@ -1,2 +1,7 @@
 import * as hulls from './hulls'
-export default hulls
+import { HullsError } from './errors'
+
+export default {
+    ...hulls,
+    HullsError
+}

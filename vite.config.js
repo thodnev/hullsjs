@@ -15,7 +15,7 @@ export default defineConfig({
     test: {     // Vitest configuration
         dir: 'src', // Base directory to scan for the test files. Default: same as root
         coverage: {
-            reportsDirectory: '../.coverage',
+            reportsDirectory: '.coverage',
             reporter: ['text', 'text-summary', 'html', 'lcovonly'],
         },
         browser: {
