@@ -34,10 +34,16 @@ function wrap_request(request: IDBOpenDBRequest | IDBRequest<any>): Promise<any>
  */
 type XOR<T, U> = (T | U) extends object 
   ? (T extends U ? never : T) | (U extends T ? never : U)
-  : T | U;
+  : T | U
 
 /** Autoincrement symbol used in table description notations */
 export const AUTOINC: symbol = Symbol.for('hulls.AUTOINC')
+
+/** Instructions used by oplist */
+export const OP = {
+    add_table: 'add_table',
+    drop_table: 'drop_table'
+}
 
 interface HullsDBInterface {
 
@@ -339,7 +345,7 @@ OPTOUT: this._ensure_connection_is(false)
 
         this._prepare_tableopts(rec, rec.name)  // modify in-place
 
-        const entry = { add: rec }
+        const entry = { [OP.add_table]: rec }
 OPTOUT: Object.seal(entry)      // prevent further modifications
 
         this.oplist.push(entry)
@@ -358,7 +364,7 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
         // This check will be optimized-out for production builds
 OPTOUT: this._ensure_connection_is(false)
 
-        const entry = {del: name}
+        const entry = {[OP.drop_table]: name}
 OPTOUT: Object.seal(entry)      // prevent further modifications
 
         this.oplist.push(entry)
@@ -384,16 +390,16 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
         while (this.oplist.length) {
             const entry = this.oplist.shift()
 
-            if ('del' in entry) {
+            if (OP.drop_table in entry) {
                 // it's a removal entry -> drop table and that's it
-                const table_name = entry['del']
+                const table_name = entry[OP.drop_table]
                 db.deleteObjectStore(table_name)
                 continue
             }
 
-            if ('add' in entry) {
+            if (OP.add_table in entry) {
                 // it's an add table entry
-                const record = entry['add']
+                const record = entry[OP.add_table]
                 db.createObjectStore(record.name, {
                     keyPath: record.keys,
                     autoIncrement: record.autoinc

@@ -23,6 +23,7 @@ export default defineConfig({
             enabled: true,
             name: 'chromium', // browser name is required
             // headless: true,
+            screenshotFailures: false,
         },
         // The glob patterns Jest uses to detect test files:
         // "**/__tests__/**/*.[jt]s?(x)"

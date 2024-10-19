@@ -2,6 +2,7 @@
 
 import { describe, expect, beforeAll, test } from 'vitest'
 import h from '..'
+import { OP } from '../hulls'
 
 
 describe('Create tables', () => {
@@ -25,7 +26,7 @@ describe('Create tables', () => {
     }
 
     function add(obj) {
-        return {add: obj}
+        return {[OP.add_table]: obj}
     }
 
     beforeAll(() => {
