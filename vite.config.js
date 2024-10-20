@@ -15,7 +15,7 @@ export default defineConfig({
     test: {     // Vitest configuration
         dir: 'src', // Base directory to scan for the test files. Default: same as root
         coverage: {
-            reportsDirectory: '../.coverage',
+            reportsDirectory: '.coverage',
             reporter: ['text', 'text-summary', 'html', 'lcovonly'],
         },
         browser: {
@@ -23,6 +23,7 @@ export default defineConfig({
             enabled: true,
             name: 'chromium', // browser name is required
             // headless: true,
+            screenshotFailures: false,
         },
         // The glob patterns Jest uses to detect test files:
         // "**/__tests__/**/*.[jt]s?(x)"

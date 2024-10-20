@@ -43,16 +43,55 @@ test('DBs are empty before testing', async () => {
 
 describe('Basic DB manipulations', () => {
     test('get_databases', async () => {
-        const names = ['these', 'are', 'test', 'databases']
+        let names = ['these', 'are', 'test', 'databases']
         await create_empty_dbs(names)
 
-        const dbs = await h.HullsDB.get_databases()
+        let dbs = await h.HullsDB.get_databases()
         expect(Object.keys(dbs)).toHaveLength(names.length)
+        expect(new Set(Object.keys(dbs))).toEqual(new Set(names))
 
-        // TODO: test names and structure conformity
+        // TODO: test structure conformity
+        // ? do we need to remove key from object on remove call?
+
+        // remove 'test' database
+        await dbs.test.remove()
+        dbs = await h.HullsDB.get_databases()
+        names.splice(names.indexOf('test'), 1)      // from names too
+        expect(Object.values(dbs)).toHaveLength(names.length)
+        expect(new Set(Object.keys(dbs))).toEqual(new Set(names))
     })
 
-    test.todo('verify that version is always int and >= 1')
+    test('db_version must always be int >= 1', () => {
+        const smth = new h.HullsDB('smth')
+        expect(smth.db_version).toBeUndefined()
+
+        function try_ver(ver: any) {
+            smth.db_version = ver
+            expect(smth.db_version).toStrictEqual(ver)
+        }
+        function fail_ver(ver: any) {
+            expect(() => {
+                smth.db_version = ver
+            }).toThrowError(h.HullsError)
+        }
+        // These should work ok
+        try_ver(123)
+        try_ver(1)
+        try_ver(88)
+        // These should raise error
+        fail_ver(-1)        // negative
+        fail_ver(0)         // zero
+        fail_ver(1.05)      // non-integer
+        fail_ver('150')     // non-number
+    })
+
+    test.todo('basic db open - first use', async () => {
+        const db = new h.HullsDB('testdb') 
+        db.create_table('mytab')
+        db.create_table('person', {pkey: 'full_name', autoinc: true})
+
+        db.drop_tables(['person', 'mytab'])
+    })
 
     afterAll(clean_dbs)
 })

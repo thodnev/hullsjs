@@ -16,10 +16,6 @@ export class HullsError extends Error {
     }
     
     // helpers for concrete errors
-    static cantset_open(varname: string = '') {
-        varname = varname ? (` '${varname}'`) : varname
-        return new this(`Can not set${varname}. Connection already open`)
-    }
 
     static at_table(msg: string = '', tablename?: string) {
         let txt = 'Table' + (tablename ? ` '${tablename}'` : '')

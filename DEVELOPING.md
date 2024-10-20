@@ -2,7 +2,7 @@
 
 #### Measure project lines of code  with cloc:
 ```bash
-ls | grep -v 'package-lock.json|node_modules' | xargs cloc
+ls | grep -Ev 'package-lock.json|node_modules' | xargs cloc
 ```
 
 #### Add Conventional Commits hook to Git:
