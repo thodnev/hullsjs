@@ -43,7 +43,7 @@ export const AUTOINC: symbol = Symbol.for('hulls.AUTOINC')
 export const OP = {
     add_table: 'add_table',
     drop_table: 'drop_table'
-}
+} as const
 
 interface HullsDBInterface {
 
@@ -129,6 +129,8 @@ export class HullsDB implements HullsDBInterface, Disposable {
         }
 
         // below: means we're dealing with a DB passed as db_name & options
+        this.#__name = db_name_or_connection
+        this.#__version = options?.db_version
     }
 
     /**
@@ -401,7 +403,7 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
                 // it's an add table entry
                 const record = entry[OP.add_table]
                 db.createObjectStore(record.name, {
-                    keyPath: record.keys,
+                    keyPath: record.pkey,
                     autoIncrement: record.autoinc
                 })
                 continue
@@ -438,10 +440,32 @@ OPTOUT: if (db_name === undefined) {
         // - Allow creating new DBs only when table structure is defined beforehand;
         // - Disallow creating empty DBs with no tables (as completely useless)
         
-        const found_ver = this.constructor._find_db_ver(db_name)
-        if (found_ver === null) {
-            // ...
+        const found_ver = await this.constructor._find_db_ver(db_name)
+        // If we're creating a DB that didn't exist before
+        // -> ensure we have at least one table to add via oplist
+OPTOUT: if (found_ver === null && !this.oplist.some(
+                (el) => OP.add_table in el)) {
+            throw new HullsError('cannot create DB with no tables')
         }
+
+        // if there are some modifications, open with +1 version
+        const open_ver = this.oplist.length ? 1 + (found_ver || 0) : undefined
+
+        // prepare db for opening
+        const db = indexedDB.open(db_name, open_ver)
+
+        // attach stuff to it ASAP
+        if (this.oplist.length) {
+            db.onupgradeneeded = this._hdl_upgrade.bind(this)
+        }
+        const db_req = wrap_request(db)    // promisify the rest
+
+        // No need to bump version after opening, it will be auto-provided
+        // this.db_version = open_ver
+
+        
+        const ret = await db_req        // run the promise
+        this.connection = ret           // attach connection to instance
     }
 }
 

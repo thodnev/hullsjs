@@ -85,5 +85,13 @@ describe('Basic DB manipulations', () => {
         fail_ver('150')     // non-number
     })
 
+    test.todo('basic db open - first use', async () => {
+        const db = new h.HullsDB('testdb') 
+        db.create_table('mytab')
+        db.create_table('person', {pkey: 'full_name', autoinc: true})
+
+        db.drop_tables(['person', 'mytab'])
+    })
+
     afterAll(clean_dbs)
 })
