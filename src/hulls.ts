@@ -13,7 +13,7 @@ import './polyfills'
 import { HullsError } from './errors'
 import { is_string, objarr2obj, JArray } from './utils'
 
-function wrap_request(request: IDBOpenDBRequest | IDBRequest<any>): Promise<any> {
+function wrap_request<T extends (IDBOpenDBRequest | IDBRequest)>(request: T): Promise<T['result']> {
     return new Promise((resolve, reject) => {
         try {
             // other callbacks (i.e. onblocked, onupgradeneeded)
@@ -49,21 +49,9 @@ interface HullsDBInterface {
 
 }
 
-/**
- * Keyword-arguments used by {@link HullsDB._open}
- * pseudo-private class method
- * 
- * @param db_version - optional db version, as per {@link indexedDB.open}
- */
-interface HullsOpenOptions {
-    readonly db_version?: number
-}
-
 // A key can be: string, date, float, a binary blob, and array.
 // https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Basic_Terminology#key
-
-
-type HullsTableKey = string | typeof AUTOINC | (Array<string | typeof AUTOINC>) 
+type HullsTableKey = Exclude<IDBValidKey, IDBValidKey[]> | typeof AUTOINC | HullsTableKey[]
 
 type HullsTableOptions = {
     pkey?: HullsTableKey
@@ -99,8 +87,9 @@ export class HullsDB implements HullsDBInterface, Disposable {
      * 
      * @param db_name - name of the DB to work with
      * @param options - optional DB parameters (like version)
+     * @param options.db_version - db version, as per {@link indexedDB.open}
      */
-    constructor(db_name: string, options?: HullsOpenOptions)
+    constructor(db_name: string, options?: {db_version: number})
 
     /**
      * Wrap an existing connection to DB
@@ -170,21 +159,9 @@ export class HullsDB implements HullsDBInterface, Disposable {
         return db_name in dbs ? dbs[db_name] : null
     }
 
-    // Opens connection to database
-    static async _open(db_name: string, options: HullsOpenOptions = {}) {
-        const {db_version = 1} = options
-    
-        //return indexedDB.open(db_name, db_version)
-        const open = indexedDB.open.bind(indexedDB)
-        const conn = await wrap_req(open, db_name, db_version)
-        
-        return new this(conn)
-    }
-
-    get db_name() {
+    get db_name(): string | undefined {
         // try getting name from connection,
-        // falling back to _name if connection not yet open
-        // @ts-ignore 2322 Type 'string | undefined' is not assignable to type 'string'.
+        // falling back to __name if connection not yet open
         return this.connection?.name ?? this.#__name
     }
 
@@ -193,9 +170,8 @@ OPTOUT: this._ensure_connection_is(false)
         this.#__name = value
     }
 
-    get db_version() {
+    get db_version(): number | undefined {
         // same as for db_name
-        // @ts-ignore 2322 Type 'number | undefined' is not assignable to type 'number'.
         return this.connection?.version ?? this.#__version
     }
 
@@ -257,6 +233,17 @@ OPTOUT: if (!Number.isInteger(value) || (value < 1)) {
         await wrap_request(req)
     }
 
+    // this one is called on instance to remove current db
+    async remove_database() {
+OPTOUT: this._ensure_connection_is(false)
+        const name = this.db_name
+        if (name === undefined) {
+            throw new HullsError('db_name undefined')
+        }
+
+        return (await this.constructor.remove_database(name))
+    }
+
     /**
      * Retrieves all ...
      * @todo TODO:
@@ -284,15 +271,7 @@ OPTOUT: if (!Number.isInteger(value) || (value < 1)) {
         })
        
         for (const [name, version] of Object.entries(dbs)) {
-            ret[name] = {
-                db_version: version,
-                open(options: HullsOpenOptions = {db_version: version}) {
-                    return cls._open(name, options)
-                },
-                remove() {
-                    return cls.remove_database(name)
-                }
-            }
+            ret[name] = new this(name, {db_version: version})
         }
         return ret
     }
@@ -386,7 +365,7 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
     protected _hdl_upgrade(event: IDBVersionChangeEvent) {
         // get values from event
         const db = (event.target as IDBOpenDBRequest).result
-        const [oldver, newver] = [event.oldVersion, event.newVersion]
+        // const [oldver, newver] = [event.oldVersion, event.newVersion]
 
         // apply changes to tables
         while (this.oplist.length) {
@@ -415,7 +394,6 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
             // won't happen unless user messes with oplist
             // no preliminary checks needed for lib size economy
         }
-        // ...
     }
 
     async open() {
@@ -459,12 +437,14 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
             db.onupgradeneeded = this._hdl_upgrade.bind(this)
         }
         const db_req = wrap_request(db)    // promisify the rest
-
-        // No need to bump version after opening, it will be auto-provided
-        // this.db_version = open_ver
-
-        
+   
         const ret = await db_req        // run the promise
+
+        // db_name and db_version will not be accessible if the connection
+        // is closed by the user -> set them manually for the case
+        this.#__version = open_ver
+        this.#__name = db_name
+
         this.connection = ret           // attach connection to instance
     }
 }
@@ -477,23 +457,6 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
 //         }
 //     })
 // }
-
-/**
- * Keyword-arguments used by {@link open} function
- * @param implementation - optional class implementing DB interface,
- *                         i.e {@link HullsDB}
- */
-type OpenOptions = HullsOpenOptions & {
-    readonly implementation?: HullsDBInterface
-}
-
-export function open(connection: string, options: OpenOptions = {}) {
-    const {implementation: cls = HullsDB, ...restopts} = options
-    // LOG('Open args: ', connection, options)
-    // LOG('Transformed: ', cls, restopts)
-
-    return cls._open(connection, restopts)
-}
 
 
 function LOG(...args) {

@@ -3,7 +3,7 @@ import { HullsError } from './errors'
 
 let exports = Object.assign(Object.create(null), {
     ...hulls,
-    HullsError
+    HullsError,
 })
 delete exports['OP']
 

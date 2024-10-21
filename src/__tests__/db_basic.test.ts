@@ -54,7 +54,7 @@ describe('Basic DB manipulations', () => {
         // ? do we need to remove key from object on remove call?
 
         // remove 'test' database
-        await dbs.test.remove()
+        await dbs.test.remove_database()
         dbs = await h.HullsDB.get_databases()
         names.splice(names.indexOf('test'), 1)      // from names too
         expect(Object.values(dbs)).toHaveLength(names.length)
