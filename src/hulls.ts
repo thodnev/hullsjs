@@ -73,6 +73,7 @@ export class HullsDB implements HullsDBInterface, Disposable {
     connection: IDBDatabase | undefined      /** holds connection object */
     #__name: string | undefined
     #__version: number | undefined
+    #__tables: Record<string, HullsTable> | undefined = undefined
 
     /** list of table operations to execute on a connection */
     oplist: JArray<any> | Array<any> = USE.INTROSPECT ? new JArray() : []
@@ -122,6 +123,35 @@ export class HullsDB implements HullsDBInterface, Disposable {
         this.#__version = options?.db_version
     }
 
+    get db_name(): string | undefined {
+        // try getting name from connection,
+        // falling back to __name if connection not yet open
+        return this.connection?.name ?? this.#__name
+    }
+
+    set db_name(value: string) {
+OPTOUT: this._ensure_connection_is(false)
+        this.#__name = value
+    }
+
+    get db_version(): number | undefined {
+        // same as for db_name
+        return this.connection?.version ?? this.#__version
+    }
+
+    set db_version(value: number) {
+OPTOUT: this._ensure_connection_is(false)
+OPTOUT: if (!Number.isInteger(value) || (value < 1)) {
+            throw new HullsError("'db_version' should be int >= 1")
+        }
+        this.#__version = value
+    }
+
+    get tables() {
+OPTOUT: this._ensure_connection_is(true)
+        return this.#__tables
+    }
+
     /**
      * Utility method used internally to verify that connection is not open
      * before performing some manipulations on DB
@@ -159,60 +189,36 @@ export class HullsDB implements HullsDBInterface, Disposable {
         return db_name in dbs ? dbs[db_name] : null
     }
 
-    get db_name(): string | undefined {
-        // try getting name from connection,
-        // falling back to __name if connection not yet open
-        return this.connection?.name ?? this.#__name
-    }
+    /**
+     * Retrieves all ...
+     * @todo TODO:
+     * - provide better typing for ret obj
+     * - refactor obj structure
+     * - ?? how do we make sure user does not forget
+     *   to call await on functions
+     * - ?? should we return proxy to HullsDB instances instead?
+     * @returns 
+     */
+    static async get_databases() {
+        // const cls = this
+        const dbs = await this._get_dbs()
 
-    set db_name(value: string) {
-OPTOUT: this._ensure_connection_is(false)
-        this.#__name = value
-    }
+        // use empty object
+        // const ret = Object.create(null)
 
-    get db_version(): number | undefined {
-        // same as for db_name
-        return this.connection?.version ?? this.#__version
-    }
+        // use introspectable object
+        // const ret: any = {
+        //     get [Symbol.toStringTag]() {return 'Hulls:Databases'}
+        // }
 
-    set db_version(value: number) {
-OPTOUT: this._ensure_connection_is(false)
-OPTOUT: if (!Number.isInteger(value) || (value < 1)) {
-            throw new HullsError("'db_version' should be int >= 1")
+        const ret = (!USE.INTROSPECT ? Object.create(null) : {
+            get [Symbol.toStringTag]() {return 'Hulls:Databases'}
+        })
+       
+        for (const [name, version] of Object.entries(dbs)) {
+            ret[name] = new this(name, {db_version: version})
         }
-        this.#__version = value
-    }
-
-    /** Provides useful and introspectable name for objects */
-    get [Symbol.toStringTag]() {
-        let ret = this.constructor.name
-        ret += (this.db_name !== undefined) ? `('${this.db_name}')` : ''
         return ret
-    }
-
-    /**
-     * Forcefully closes a connection to DB
-     * 
-     * @remarks
-     * For simplicity, it does not check whether the connection 
-     * was previously open or not
-     */
-    close() {
-        this.connection?.close()
-        this.connection = undefined
-    }
-
-    /**
-     * Destructor, used with TC39 explicit resource management
-     * https://github.com/tc39/proposal-explicit-resource-management
-     * 
-     * Try it with the new `using` syntax:
-     * @example
-     * using db = open('MyDB')
-     * // ...
-     */
-    [Symbol.dispose]() {
-        this.close()
     }
 
     /**
@@ -244,40 +250,7 @@ OPTOUT: this._ensure_connection_is(false)
         return (await this.constructor.remove_database(name))
     }
 
-    /**
-     * Retrieves all ...
-     * @todo TODO:
-     * - provide better typing for ret obj
-     * - refactor obj structure
-     * - ?? how do we make sure user does not forget
-     *   to call await on functions
-     * - ?? should we return proxy to HullsDB instances instead?
-     * @returns 
-     */
-    static async get_databases() {
-        const cls = this
-        const dbs = await this._get_dbs()
-
-        // use empty object
-        // const ret = Object.create(null)
-
-        // use introspectable object
-        // const ret: any = {
-        //     get [Symbol.toStringTag]() {return 'Hulls:Databases'}
-        // }
-
-        const ret = (!USE.INTROSPECT ? Object.create(null) : {
-            get [Symbol.toStringTag]() {return 'Hulls:Databases'}
-        })
-       
-        for (const [name, version] of Object.entries(dbs)) {
-            ret[name] = new this(name, {db_version: version})
-        }
-        return ret
-    }
-
-    // TODO: add ability to set key: AUTOINC
-    protected _prepare_tableopts<T extends HullsTableOptions> (tableopts: T, tablename?: string) {
+    protected static _prepare_tableopts<T extends HullsTableOptions> (tableopts: T, tablename?: string) {
         if (!tableopts.pkey || is_string(tableopts.pkey)) {
             // Table is a string or an object storage with no keys -> do nothing
             return
@@ -324,7 +297,7 @@ OPTOUT: this._ensure_connection_is(false)
             rec = Object.assign({}, name_or_obj)
         }
 
-        this._prepare_tableopts(rec, rec.name)  // modify in-place
+        this.constructor._prepare_tableopts(rec, rec.name)  // modify in-place
 
         const entry = { [OP.add_table]: rec }
 OPTOUT: Object.seal(entry)      // prevent further modifications
@@ -367,6 +340,14 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
         const db = (event.target as IDBOpenDBRequest).result
         // const [oldver, newver] = [event.oldVersion, event.newVersion]
 
+        function try_wrap(func: Function, ...args: any[]) {
+            try {
+                return func(...args)
+            } catch (err) {
+                throw HullsError.from_cause(err)
+            }
+        }
+
         // apply changes to tables
         while (this.oplist.length) {
             const entry = this.oplist.shift()
@@ -374,17 +355,22 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
             if (OP.drop_table in entry) {
                 // it's a removal entry -> drop table and that's it
                 const table_name = entry[OP.drop_table]
-                db.deleteObjectStore(table_name)
+                try_wrap(db.deleteObjectStore.bind(db, table_name))
+                // db.deleteObjectStore(table_name)
                 continue
             }
 
             if (OP.add_table in entry) {
                 // it's an add table entry
                 const record = entry[OP.add_table]
-                db.createObjectStore(record.name, {
+                try_wrap(db.createObjectStore.bind(db, record.name, {
                     keyPath: record.pkey,
                     autoIncrement: record.autoinc
-                })
+                }))
+                // db.createObjectStore(record.name, {
+                //     keyPath: record.pkey,
+                //     autoIncrement: record.autoinc
+                // })
                 continue
             }
 
@@ -438,14 +424,55 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
         }
         const db_req = wrap_request(db)    // promisify the rest
    
-        const ret = await db_req        // run the promise
+        const connection = await db_req        // run the promise
+
+        // fill-in table structure
+        const tables = Object.create(null)
+        for (const name of connection.objectStoreNames) {
+            tables[name] = new HullsTable({db: this, table_name: name})
+        }
+        Object.seal(tables)
+        this.#__tables = tables
 
         // db_name and db_version will not be accessible if the connection
         // is closed by the user -> set them manually for the case
         this.#__version = open_ver
         this.#__name = db_name
 
-        this.connection = ret           // attach connection to instance
+        this.connection = connection           // attach connection to instance
+    }
+
+    /**
+     * Forcefully closes a connection to DB
+     * 
+     * @remarks
+     * For simplicity, it does not check whether the connection 
+     * was previously open or not
+     */
+    close() {
+        this.connection?.close()
+        this.#__tables = undefined
+        this.connection = undefined
+    }
+
+    /**
+     * Destructor, used with TC39 explicit resource management
+     * https://github.com/tc39/proposal-explicit-resource-management
+     * 
+     * Try it with the new `using` syntax:
+     * @example
+     * using db = open('MyDB')
+     * // ...
+     */
+    [Symbol.dispose]() {
+        this.close()
+    }
+
+    /** Provides useful and introspectable name for objects */
+    get [Symbol.toStringTag]() {
+        let ret = this.constructor.name
+        ret += (this.db_name !== undefined) ? `('${this.db_name}')` : ''
+        return ret
     }
 }
 
@@ -457,6 +484,22 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
 //         }
 //     })
 // }
+
+
+class HullsTable {
+    _db: HullsDB
+    _name: string
+
+    constructor({db, table_name}: {db: HullsDB, table_name: string}) {
+        this._db = db
+        this._name = table_name
+    }
+
+    get [Symbol.toStringTag]() {
+        const parent = this._db[Symbol.toStringTag]
+        return `${parent}:${this._name}`
+    }
+}
 
 
 function LOG(...args) {
