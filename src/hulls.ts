@@ -13,17 +13,23 @@ import './polyfills'
 import { HullsError } from './errors'
 import { is_string, objarr2obj, JArray } from './utils'
 
-function wrap_request<T extends (IDBOpenDBRequest | IDBRequest)>(request: T): Promise<T['result']> {
-    return new Promise((resolve, reject) => {
-        try {
-            // other callbacks (i.e. onblocked, onupgradeneeded)
-            // should be attached by the caller in the outer scope
-            request.onsuccess = (_: any) => resolve(request.result)
-            request.onerror = (_: any) => reject(HullsError.from_cause(request.error))
-        } catch (err) {
-            reject(HullsError.from_cause(err))
-        }
-    })
+type UnscopedPromise<T> = Promise<T> & Pick<PromiseWithResolvers<T>, 'resolve' | 'reject'>
+
+function wrap_request<T extends (IDBOpenDBRequest | IDBRequest)>(request: T): UnscopedPromise<T['result']> {
+    const { promise, resolve, reject } = Promise.withResolvers()
+
+    request.onsuccess = (_: any) => resolve(request.result)
+    request.onerror = (_: any) => reject(HullsError.from_cause(request.error))
+
+    // attach .resolve and .reject to promise itself
+    // so that they may be used outside of the promise and this wrapper
+
+    // @ts-ignore
+    promise['resolve'] = resolve
+    // @ts-ignore
+    promise['reject'] = reject
+
+    return promise as UnscopedPromise<T['result']>
 }
 
 /**
@@ -330,12 +336,18 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
         }
     }
 
+    // @todo TODO:  (!) Even with try_wrap, it is impossible to catch error
+    // So, we need to call reject(...) ourselves.
+    // And onerror will call reject(...) again because of transaction abortion.
+    // Calling reject in promise is harmless (it was already rejected),
+    // this way we will trap the first (and only first) error
+    //
     // onupgradeneeded handler
     // it should always be attached as bound, i.e.
     // req.onupgradeneeded = this._hdl_upgrade.bind(this)
     // Note: Surprisingly, bound method is faster than ordinary function
     //       per https://jsperf.app/qefuyi
-    protected _hdl_upgrade(event: IDBVersionChangeEvent) {
+    protected _hdl_upgrade(reject: PromiseWithResolvers<any>['reject'], event: IDBVersionChangeEvent) {
         // get values from event
         const db = (event.target as IDBOpenDBRequest).result
         // const [oldver, newver] = [event.oldVersion, event.newVersion]
@@ -344,7 +356,7 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
             try {
                 return func(...args)
             } catch (err) {
-                throw HullsError.from_cause(err)
+                reject(HullsError.from_cause(err))
             }
         }
 
@@ -419,11 +431,11 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
         const db = indexedDB.open(db_name, open_ver)
 
         // attach stuff to it ASAP
+        const db_req  = wrap_request(db)    // promisify the rest
         if (this.oplist.length) {
-            db.onupgradeneeded = this._hdl_upgrade.bind(this)
+            db.onupgradeneeded = this._hdl_upgrade.bind(this, db_req.reject)
         }
-        const db_req = wrap_request(db)    // promisify the rest
-   
+
         const connection = await db_req        // run the promise
 
         // fill-in table structure
