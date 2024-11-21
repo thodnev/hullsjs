@@ -486,6 +486,19 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
         ret += (this.db_name !== undefined) ? `('${this.db_name}')` : ''
         return ret
     }
+
+    // TODO:
+    // - it should be between open and close
+    // - tables must denote single table or iterable of tables
+    //   from this.tables
+    // - make a key buider, i.e: .from(1).to(10)
+    transaction(tables, mode) {
+        // ensure db is open
+        // ...
+
+        //const tx = new HullsTransaction(...)
+        //return tx
+    }
 }
 
 // Methods below are defined on HullsDB if not optimized-out for production runtime
@@ -498,6 +511,20 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
 // }
 
 
+// For method names we replicate SQL statement names following MySQL docs:
+// https://dev.mysql.com/doc/refman/9.1/en/sql-data-manipulation-statements.html
+// to map ObjectStore methods from https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore#instance_methods
+// | HullsTable | ObjectStore |
+// |------------|-------------|
+// | select ?   | get         |
+// | select ?   | getAll      |
+// | insert     | add         |     https://dev.mysql.com/doc/refman/9.1/en/insert.html
+// | update     | put         |     https://dev.mysql.com/doc/refman/9.1/en/update.html
+// | delete     | delete      |     https://dev.mysql.com/doc/refman/9.1/en/delete.html
+// | count      | count       |     https://dev.mysql.com/doc/refman/9.1/en/aggregate-functions.html#function_count
+// | truncate ? | clear       |     https://dev.mysql.com/doc/refman/9.1/en/truncate-table.html
+// | ...        | ...         |
+// |------------|-------------|
 class HullsTable {
     _db: HullsDB
     _name: string
@@ -507,10 +534,136 @@ class HullsTable {
         this._name = table_name
     }
 
+
+
     get [Symbol.toStringTag]() {
         const parent = this._db[Symbol.toStringTag]
         return `${parent}:${this._name}`
     }
+}
+
+
+type PKey = IDBValidKey
+
+// Wraps IDBKeyRange madness
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBKeyRange
+// This adds ~ ... (150 bytes brotli) to bundle
+export class PK {
+    // [BOUNDARY_VALUE, is_strict]
+    #bound_lower: [PKey, boolean] | undefined
+    #bound_upper: [PKey, boolean] | undefined
+
+    /**
+     * Converts itself into a IDBKeyRange
+     * @returns IDBKeyRange with provided boundaries
+     */
+    as_keyrange() {
+        if (this.#bound_lower && this.#bound_upper) {   // two boundaries are set
+            let [low, low_strict] = this.#bound_lower 
+            let [high, high_strict] = this.#bound_upper
+
+            // swap boundaries when one was set instead of the other
+            // e.g.: .from(-5).to(-10) instead of .from(-10).to(-5)
+            if (low > high) {
+                ;[low, high] = [high, low]
+                ;[low_strict, high_strict] = [high_strict, low_strict]
+            }
+
+            // val <= PK <= val means PK === val
+            if (low === high && !low_strict && !high_strict) {
+                return IDBKeyRange.only(low)
+            }
+
+            // otherwise we are looking for a range
+            return IDBKeyRange.bound(low, high, low_strict, high_strict)
+        } 
+        
+        if (this.#bound_lower) {        // only lower boundary is set
+            const [low, low_strict] = this.#bound_lower
+
+            return IDBKeyRange.lowerBound(low, low_strict)
+        }
+
+        if (this.#bound_upper) {        // only higher boundary is set
+            const [high, high_strict] = this.#bound_upper
+
+            return IDBKeyRange.upperBound(high, high_strict)
+        }
+
+        // none of the boundaries set  ->  straight up ERROR
+OPTOUT: throw new HullsError('None of the PK boundaries were set')
+    }
+
+    /** Less than: PK < value */
+    lt(value: PKey) {
+        this.#bound_upper = [value, true]
+        return this
+    }
+
+    static lt(value: PKey) { return new this().lt(value) }
+
+    /** Less than or equal to: PK <= value
+     * @alias upto
+     */
+    le(value: PKey) {
+        this.#bound_upper = [value, false]
+        return this
+    }
+
+    static le(value: PKey) { return new this().le(value) }
+
+    /** Greater than: PK > value */
+    gt(value: PKey) {
+        this.#bound_lower = [value, true]
+        return this
+    }
+
+    static gt(value: PKey) { return new this().gt(value) }
+
+    /** Greater than or equal to: PK >= value
+     * @alias from
+     */
+    ge(value: PKey) {
+        this.#bound_lower = [value, false]
+        return this
+    }
+
+    static ge(value: PKey) { return new this().ge(value) }
+
+    /**
+     * Equals exactly: PK === value
+     * @alias is
+     * @remarks
+     * Operators are combined using logical AND.
+     * When this operator is used, other comparisons may not be used
+     * alongside it.
+     * I.e. when PK === smth it can't be that PK > other.
+     * 
+     * @param value - value to compare Primary Key against
+     */
+    static eq(value: PKey) {
+        // TODO: test for other operators
+        return new this().ge(value).le(value)
+    }
+
+    /** Alias for PK === value
+     * @alias eq
+     */
+    static is = this.eq
+
+    /** Alias for PK >= value
+     * @alias ge
+     */
+    from = this.ge
+    static from = this.ge
+
+    /** Alias for PK <= value
+     * @alias le
+     */
+    to = this.le
+    upto = this.le
+    static to = this.le
+    static upto = this.le
 }
 
 
