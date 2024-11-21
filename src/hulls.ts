@@ -13,17 +13,23 @@ import './polyfills'
 import { HullsError } from './errors'
 import { is_string, objarr2obj, JArray } from './utils'
 
-function wrap_request<T extends (IDBOpenDBRequest | IDBRequest)>(request: T): Promise<T['result']> {
-    return new Promise((resolve, reject) => {
-        try {
-            // other callbacks (i.e. onblocked, onupgradeneeded)
-            // should be attached by the caller in the outer scope
-            request.onsuccess = (_: any) => resolve(request.result)
-            request.onerror = (_: any) => reject(HullsError.from_cause(request.error))
-        } catch (err) {
-            reject(HullsError.from_cause(err))
-        }
-    })
+type UnscopedPromise<T> = Promise<T> & Pick<PromiseWithResolvers<T>, 'resolve' | 'reject'>
+
+function wrap_request<T extends (IDBOpenDBRequest | IDBRequest)>(request: T): UnscopedPromise<T['result']> {
+    const { promise, resolve, reject } = Promise.withResolvers()
+
+    request.onsuccess = (_: any) => resolve(request.result)
+    request.onerror = (_: any) => reject(HullsError.from_cause(request.error))
+
+    // attach .resolve and .reject to promise itself
+    // so that they may be used outside of the promise and this wrapper
+
+    // @ts-ignore
+    promise['resolve'] = resolve
+    // @ts-ignore
+    promise['reject'] = reject
+
+    return promise as UnscopedPromise<T['result']>
 }
 
 /**
@@ -73,6 +79,7 @@ export class HullsDB implements HullsDBInterface, Disposable {
     connection: IDBDatabase | undefined      /** holds connection object */
     #__name: string | undefined
     #__version: number | undefined
+    #__tables: Record<string, HullsTable> | undefined = undefined
 
     /** list of table operations to execute on a connection */
     oplist: JArray<any> | Array<any> = USE.INTROSPECT ? new JArray() : []
@@ -122,6 +129,35 @@ export class HullsDB implements HullsDBInterface, Disposable {
         this.#__version = options?.db_version
     }
 
+    get db_name(): string | undefined {
+        // try getting name from connection,
+        // falling back to __name if connection not yet open
+        return this.connection?.name ?? this.#__name
+    }
+
+    set db_name(value: string) {
+OPTOUT: this._ensure_connection_is(false)
+        this.#__name = value
+    }
+
+    get db_version(): number | undefined {
+        // same as for db_name
+        return this.connection?.version ?? this.#__version
+    }
+
+    set db_version(value: number) {
+OPTOUT: this._ensure_connection_is(false)
+OPTOUT: if (!Number.isInteger(value) || (value < 1)) {
+            throw new HullsError("'db_version' should be int >= 1")
+        }
+        this.#__version = value
+    }
+
+    get tables() {
+OPTOUT: this._ensure_connection_is(true)
+        return this.#__tables
+    }
+
     /**
      * Utility method used internally to verify that connection is not open
      * before performing some manipulations on DB
@@ -159,60 +195,36 @@ export class HullsDB implements HullsDBInterface, Disposable {
         return db_name in dbs ? dbs[db_name] : null
     }
 
-    get db_name(): string | undefined {
-        // try getting name from connection,
-        // falling back to __name if connection not yet open
-        return this.connection?.name ?? this.#__name
-    }
+    /**
+     * Retrieves all ...
+     * @todo TODO:
+     * - provide better typing for ret obj
+     * - refactor obj structure
+     * - ?? how do we make sure user does not forget
+     *   to call await on functions
+     * - ?? should we return proxy to HullsDB instances instead?
+     * @returns 
+     */
+    static async get_databases() {
+        // const cls = this
+        const dbs = await this._get_dbs()
 
-    set db_name(value: string) {
-OPTOUT: this._ensure_connection_is(false)
-        this.#__name = value
-    }
+        // use empty object
+        // const ret = Object.create(null)
 
-    get db_version(): number | undefined {
-        // same as for db_name
-        return this.connection?.version ?? this.#__version
-    }
+        // use introspectable object
+        // const ret: any = {
+        //     get [Symbol.toStringTag]() {return 'Hulls:Databases'}
+        // }
 
-    set db_version(value: number) {
-OPTOUT: this._ensure_connection_is(false)
-OPTOUT: if (!Number.isInteger(value) || (value < 1)) {
-            throw new HullsError("'db_version' should be int >= 1")
+        const ret = (!USE.INTROSPECT ? Object.create(null) : {
+            get [Symbol.toStringTag]() {return 'Hulls:Databases'}
+        })
+       
+        for (const [name, version] of Object.entries(dbs)) {
+            ret[name] = new this(name, {db_version: version})
         }
-        this.#__version = value
-    }
-
-    /** Provides useful and introspectable name for objects */
-    get [Symbol.toStringTag]() {
-        let ret = this.constructor.name
-        ret += (this.db_name !== undefined) ? `('${this.db_name}')` : ''
         return ret
-    }
-
-    /**
-     * Forcefully closes a connection to DB
-     * 
-     * @remarks
-     * For simplicity, it does not check whether the connection 
-     * was previously open or not
-     */
-    close() {
-        this.connection?.close()
-        this.connection = undefined
-    }
-
-    /**
-     * Destructor, used with TC39 explicit resource management
-     * https://github.com/tc39/proposal-explicit-resource-management
-     * 
-     * Try it with the new `using` syntax:
-     * @example
-     * using db = open('MyDB')
-     * // ...
-     */
-    [Symbol.dispose]() {
-        this.close()
     }
 
     /**
@@ -244,40 +256,7 @@ OPTOUT: this._ensure_connection_is(false)
         return (await this.constructor.remove_database(name))
     }
 
-    /**
-     * Retrieves all ...
-     * @todo TODO:
-     * - provide better typing for ret obj
-     * - refactor obj structure
-     * - ?? how do we make sure user does not forget
-     *   to call await on functions
-     * - ?? should we return proxy to HullsDB instances instead?
-     * @returns 
-     */
-    static async get_databases() {
-        const cls = this
-        const dbs = await this._get_dbs()
-
-        // use empty object
-        // const ret = Object.create(null)
-
-        // use introspectable object
-        // const ret: any = {
-        //     get [Symbol.toStringTag]() {return 'Hulls:Databases'}
-        // }
-
-        const ret = (!USE.INTROSPECT ? Object.create(null) : {
-            get [Symbol.toStringTag]() {return 'Hulls:Databases'}
-        })
-       
-        for (const [name, version] of Object.entries(dbs)) {
-            ret[name] = new this(name, {db_version: version})
-        }
-        return ret
-    }
-
-    // TODO: add ability to set key: AUTOINC
-    protected _prepare_tableopts<T extends HullsTableOptions> (tableopts: T, tablename?: string) {
+    protected static _prepare_tableopts<T extends HullsTableOptions> (tableopts: T, tablename?: string) {
         if (!tableopts.pkey || is_string(tableopts.pkey)) {
             // Table is a string or an object storage with no keys -> do nothing
             return
@@ -324,7 +303,7 @@ OPTOUT: this._ensure_connection_is(false)
             rec = Object.assign({}, name_or_obj)
         }
 
-        this._prepare_tableopts(rec, rec.name)  // modify in-place
+        this.constructor._prepare_tableopts(rec, rec.name)  // modify in-place
 
         const entry = { [OP.add_table]: rec }
 OPTOUT: Object.seal(entry)      // prevent further modifications
@@ -357,15 +336,29 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
         }
     }
 
+    // @todo TODO:  (!) Even with try_wrap, it is impossible to catch error
+    // So, we need to call reject(...) ourselves.
+    // And onerror will call reject(...) again because of transaction abortion.
+    // Calling reject in promise is harmless (it was already rejected),
+    // this way we will trap the first (and only first) error
+    //
     // onupgradeneeded handler
     // it should always be attached as bound, i.e.
     // req.onupgradeneeded = this._hdl_upgrade.bind(this)
     // Note: Surprisingly, bound method is faster than ordinary function
     //       per https://jsperf.app/qefuyi
-    protected _hdl_upgrade(event: IDBVersionChangeEvent) {
+    protected _hdl_upgrade(reject: PromiseWithResolvers<any>['reject'], event: IDBVersionChangeEvent) {
         // get values from event
         const db = (event.target as IDBOpenDBRequest).result
         // const [oldver, newver] = [event.oldVersion, event.newVersion]
+
+        function try_wrap(func: Function, ...args: any[]) {
+            try {
+                return func(...args)
+            } catch (err) {
+                reject(HullsError.from_cause(err))
+            }
+        }
 
         // apply changes to tables
         while (this.oplist.length) {
@@ -374,17 +367,22 @@ OPTOUT: Object.seal(entry)      // prevent further modifications
             if (OP.drop_table in entry) {
                 // it's a removal entry -> drop table and that's it
                 const table_name = entry[OP.drop_table]
-                db.deleteObjectStore(table_name)
+                try_wrap(db.deleteObjectStore.bind(db, table_name))
+                // db.deleteObjectStore(table_name)
                 continue
             }
 
             if (OP.add_table in entry) {
                 // it's an add table entry
                 const record = entry[OP.add_table]
-                db.createObjectStore(record.name, {
+                try_wrap(db.createObjectStore.bind(db, record.name, {
                     keyPath: record.pkey,
                     autoIncrement: record.autoinc
-                })
+                }))
+                // db.createObjectStore(record.name, {
+                //     keyPath: record.pkey,
+                //     autoIncrement: record.autoinc
+                // })
                 continue
             }
 
@@ -433,19 +431,73 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
         const db = indexedDB.open(db_name, open_ver)
 
         // attach stuff to it ASAP
+        const db_req  = wrap_request(db)    // promisify the rest
         if (this.oplist.length) {
-            db.onupgradeneeded = this._hdl_upgrade.bind(this)
+            db.onupgradeneeded = this._hdl_upgrade.bind(this, db_req.reject)
         }
-        const db_req = wrap_request(db)    // promisify the rest
-   
-        const ret = await db_req        // run the promise
+
+        const connection = await db_req        // run the promise
+
+        // fill-in table structure
+        const tables = Object.create(null)
+        for (const name of connection.objectStoreNames) {
+            tables[name] = new HullsTable({db: this, table_name: name})
+        }
+        Object.seal(tables)
+        this.#__tables = tables
 
         // db_name and db_version will not be accessible if the connection
         // is closed by the user -> set them manually for the case
         this.#__version = open_ver
         this.#__name = db_name
 
-        this.connection = ret           // attach connection to instance
+        this.connection = connection           // attach connection to instance
+    }
+
+    /**
+     * Forcefully closes a connection to DB
+     * 
+     * @remarks
+     * For simplicity, it does not check whether the connection 
+     * was previously open or not
+     */
+    close() {
+        this.connection?.close()
+        this.#__tables = undefined
+        this.connection = undefined
+    }
+
+    /**
+     * Destructor, used with TC39 explicit resource management
+     * https://github.com/tc39/proposal-explicit-resource-management
+     * 
+     * Try it with the new `using` syntax:
+     * @example
+     * using db = open('MyDB')
+     * // ...
+     */
+    [Symbol.dispose]() {
+        this.close()
+    }
+
+    /** Provides useful and introspectable name for objects */
+    get [Symbol.toStringTag]() {
+        let ret = this.constructor.name
+        ret += (this.db_name !== undefined) ? `('${this.db_name}')` : ''
+        return ret
+    }
+
+    // TODO:
+    // - it should be between open and close
+    // - tables must denote single table or iterable of tables
+    //   from this.tables
+    // - make a key buider, i.e: .from(1).to(10)
+    transaction(tables, mode) {
+        // ensure db is open
+        // ...
+
+        //const tx = new HullsTransaction(...)
+        //return tx
     }
 }
 
@@ -457,6 +509,162 @@ OPTOUT: if (found_ver === null && !this.oplist.some(
 //         }
 //     })
 // }
+
+
+// For method names we replicate SQL statement names following MySQL docs:
+// https://dev.mysql.com/doc/refman/9.1/en/sql-data-manipulation-statements.html
+// to map ObjectStore methods from https://developer.mozilla.org/en-US/docs/Web/API/IDBObjectStore#instance_methods
+// | HullsTable | ObjectStore |
+// |------------|-------------|
+// | select ?   | get         |
+// | select ?   | getAll      |
+// | insert     | add         |     https://dev.mysql.com/doc/refman/9.1/en/insert.html
+// | update     | put         |     https://dev.mysql.com/doc/refman/9.1/en/update.html
+// | delete     | delete      |     https://dev.mysql.com/doc/refman/9.1/en/delete.html
+// | count      | count       |     https://dev.mysql.com/doc/refman/9.1/en/aggregate-functions.html#function_count
+// | truncate ? | clear       |     https://dev.mysql.com/doc/refman/9.1/en/truncate-table.html
+// | ...        | ...         |
+// |------------|-------------|
+class HullsTable {
+    _db: HullsDB
+    _name: string
+
+    constructor({db, table_name}: {db: HullsDB, table_name: string}) {
+        this._db = db
+        this._name = table_name
+    }
+
+
+
+    get [Symbol.toStringTag]() {
+        const parent = this._db[Symbol.toStringTag]
+        return `${parent}:${this._name}`
+    }
+}
+
+
+type PKey = IDBValidKey
+
+// Wraps IDBKeyRange madness
+// https://developer.mozilla.org/en-US/docs/Web/API/IDBKeyRange
+// This adds ~ ... (150 bytes brotli) to bundle
+export class PK {
+    // [BOUNDARY_VALUE, is_strict]
+    #bound_lower: [PKey, boolean] | undefined
+    #bound_upper: [PKey, boolean] | undefined
+
+    /**
+     * Converts itself into a IDBKeyRange
+     * @returns IDBKeyRange with provided boundaries
+     */
+    as_keyrange() {
+        if (this.#bound_lower && this.#bound_upper) {   // two boundaries are set
+            let [low, low_strict] = this.#bound_lower 
+            let [high, high_strict] = this.#bound_upper
+
+            // swap boundaries when one was set instead of the other
+            // e.g.: .from(-5).to(-10) instead of .from(-10).to(-5)
+            if (low > high) {
+                ;[low, high] = [high, low]
+                ;[low_strict, high_strict] = [high_strict, low_strict]
+            }
+
+            // val <= PK <= val means PK === val
+            if (low === high && !low_strict && !high_strict) {
+                return IDBKeyRange.only(low)
+            }
+
+            // otherwise we are looking for a range
+            return IDBKeyRange.bound(low, high, low_strict, high_strict)
+        } 
+        
+        if (this.#bound_lower) {        // only lower boundary is set
+            const [low, low_strict] = this.#bound_lower
+
+            return IDBKeyRange.lowerBound(low, low_strict)
+        }
+
+        if (this.#bound_upper) {        // only higher boundary is set
+            const [high, high_strict] = this.#bound_upper
+
+            return IDBKeyRange.upperBound(high, high_strict)
+        }
+
+        // none of the boundaries set  ->  straight up ERROR
+OPTOUT: throw new HullsError('None of the PK boundaries were set')
+    }
+
+    /** Less than: PK < value */
+    lt(value: PKey) {
+        this.#bound_upper = [value, true]
+        return this
+    }
+
+    static lt(value: PKey) { return new this().lt(value) }
+
+    /** Less than or equal to: PK <= value
+     * @alias upto
+     */
+    le(value: PKey) {
+        this.#bound_upper = [value, false]
+        return this
+    }
+
+    static le(value: PKey) { return new this().le(value) }
+
+    /** Greater than: PK > value */
+    gt(value: PKey) {
+        this.#bound_lower = [value, true]
+        return this
+    }
+
+    static gt(value: PKey) { return new this().gt(value) }
+
+    /** Greater than or equal to: PK >= value
+     * @alias from
+     */
+    ge(value: PKey) {
+        this.#bound_lower = [value, false]
+        return this
+    }
+
+    static ge(value: PKey) { return new this().ge(value) }
+
+    /**
+     * Equals exactly: PK === value
+     * @alias is
+     * @remarks
+     * Operators are combined using logical AND.
+     * When this operator is used, other comparisons may not be used
+     * alongside it.
+     * I.e. when PK === smth it can't be that PK > other.
+     * 
+     * @param value - value to compare Primary Key against
+     */
+    static eq(value: PKey) {
+        // TODO: test for other operators
+        return new this().ge(value).le(value)
+    }
+
+    /** Alias for PK === value
+     * @alias eq
+     */
+    static is = this.eq
+
+    /** Alias for PK >= value
+     * @alias ge
+     */
+    from = this.ge
+    static from = this.ge
+
+    /** Alias for PK <= value
+     * @alias le
+     */
+    to = this.le
+    upto = this.le
+    static to = this.le
+    static upto = this.le
+}
 
 
 function LOG(...args) {

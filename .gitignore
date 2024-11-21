@@ -1,4 +1,7 @@
-# Jest coverage directory
+# (temporary) The most recent packages are used for now
+/package-lock.json
+
+# Test coverage directory
 /.coverage
 
 # Logs
